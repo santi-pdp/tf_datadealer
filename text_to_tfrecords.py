@@ -157,11 +157,31 @@ def main(opts):
         if label_idx is not None:
             utterances = zip(csv_lab_records, *csv_txt_records.values())
         beg_t = timeit.default_timer()
+        # store dictionary with description of context features
+        context_features_desc = {}
+        # store dictionary with description of sequence features
+        seq_features_desc = {}
+
+        def register_context_feature_desc(feature_name, feature_type):
+            assert feature_type == 'int64_list' or feature_type == 'float_lsit' \
+                or feature_type == 'bytes_list', feature_type
+            if feature_name not in context_features_desc:
+                context_features_desc[feature_name] = feature_type
+
+        def register_seq_feature_desc(feature_name, feature_type):
+            assert feature_type == 'int64_list' or feature_type == 'float_lsit' \
+                or feature_type == 'bytes_list', feature_type
+            if feature_name not in seq_features_desc:
+                seq_features_desc[feature_name] = feature_type
+
         # keep track of timings to know how much it lasts per record
         utt_times = []
         for u_i, utts in enumerate(utterances):
             first_utt_idx = 0
-            ex = tf.train.SequenceExample()
+            #ex = tf.train.SequenceExample()
+            # initialize the dictionaries of TFRecords features
+            context_features = {}
+            seq_features = {}
             if label_idx is not None:
                 # first utt is label
                 first_utt_idx += 1
@@ -179,21 +199,42 @@ def main(opts):
                     max_seq_len = seq_len
                 if opts.do_chars and max_word_len < word_len:
                     max_word_len = word_len
-                ex.context.feature["{}_length".format(keys[i])].int64_list.value.append(seq_len)
+                register_context_feature_desc('{}_length'.format(keys[i]),
+                                              'int64_list')
+                register_context_feature_desc('do_chars'.format(keys[i]),
+                                              'int64_list')
+                register_context_feature_desc('do_words'.format(keys[i]),
+                                              'int64_list')
+                context_features['{}_length'.format(keys[i])] = tf.train.Feature(int64_list=tf.train.Int64List(value=[seq_len]))
+                context_features['do_chars'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[int(opts.do_chars == 'true')]))
+                context_features['do_words'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[int(opts.do_words == 'true')]))
                 if opts.do_words:
+                    register_seq_feature_desc('{}_words'.format(keys[i]),
+                                              'int64_list')
                     # Feature list for the words sequence
-                    tfr_words = ex.feature_lists.feature_list["{}_words".format(keys[i])]
-                    for word in e_words:
-                        tfr_words.feature.add().int64_list.value.append(word)
+                    seq_features['{}_words'.format(keys[i])] = tf.train.FeatureList(
+                        feature=[tf.train.Feature(int64_list=tf.train.Int64List(value=e_words))]
+                    )
                 if opts.do_chars:
                     # Feature list of feature list for the chars sequence
-                    tfr_chars = ex.feature_lists.feature_list["{}_chars".format(keys[i])]
-                    tfr_chars_len = ex.feature_lists.feature_list["{}_chars_len".format(keys[i])]
-                    for word in e_chars:
-                        #print('Registering word length: {}\t with codes: {}...'.format(len(word), word))
-                        tfr_chars_len.feature.add().int64_list.value.append(len(word))
-                        for char in word:
-                            tfr_chars.feature.add().int64_list.value.append(char)
+                    register_seq_feature_desc('{}_chars_len'.format(keys[i]),
+                                              'int64_list')
+                    register_seq_feature_desc('{}_chars'.format(keys[i]),
+                                              'int64_list')
+                    # Register each words len to decode
+                    word_lens = [len(word) for word in e_chars]
+                    seq_features['{}_chars_len'.format(keys[i])] = tf.train.FeatureList(
+                        feature=[tf.train.Feature(int64_list=tf.train.Int64List(value=word_lens))]
+                    )
+                    # Register each word chars decomposition
+                    seq_features['{}_chars'.format(keys[i])] = tf.train.FeatureList(
+                        feature=[tf.train.Feature(int64_list=tf.train.Int64List(value=e_char)) for e_char in e_chars]
+                    )
+            # build the example
+            ex = tf.train.SequenceExample(
+                context=tf.train.Features(feature=context_features),
+                feature_lists=tf.train.FeatureLists(feature_list=seq_features)
+            )
             out_tf.write(ex.SerializeToString())
             utt_end_t = timeit.default_timer()
             utt_times.append(utt_end_t - utt_beg_t)
@@ -205,10 +246,21 @@ def main(opts):
             sys.stdout.flush()
         end_t = timeit.default_timer()
         print('--> Done writing {} in {} s <--'.format(out_path, end_t - beg_t))
-        print('Max seq len: ', max_seq_len)
+        # write the TFRecords file format to pickle such that can be recomposed
+        tfr_format = {
+            'context_features':context_features_desc,
+            'sequence_features':seq_features_desc
+        }
+        fmt_path = os.path.join(opts.save_path,
+                                opts.out_prefix + '_fmt.pkl.gz')
+        # store format file
+        with gzip.open(fmt_path, 'wb') as fmt_f:
+            pickle.dump(tfr_format, fmt_f)
+
+        print('Max seq len found: ', max_seq_len)
         vocab['max_seq_len'] = max_seq_len
         if opts.do_chars:
-            print('Max word len: ', max_word_len)
+            print('Max word len found: ', max_word_len)
             vocab['max_word_len'] = max_word_len
         out_tf.close()
         vocab_path = os.path.join(opts.save_path,
