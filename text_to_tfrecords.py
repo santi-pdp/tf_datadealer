@@ -138,10 +138,10 @@ def main(opts):
             assert tokens.START not in tr_chars.keys()
             assert tokens.END not in tr_chars.keys()
             assert tokens.ZEROPAD not in tr_chars.keys()
-            vocab['char2idx'][tokens.EOS] = 0
-            vocab['char2idx'][tokens.START] = 1
-            vocab['char2idx'][tokens.END] = 2
-            vocab['char2idx'][tokens.ZEROPAD] = 3
+            vocab['char2idx'][tokens.ZEROPAD] = 0
+            vocab['char2idx'][tokens.EOS] = 1
+            vocab['char2idx'][tokens.START] = 2
+            vocab['char2idx'][tokens.END] = 3
             print('Num of unique chars: ', len(tr_chars.keys()))
             vocab['idx2char'] = dict((v, k) for k, v in
                                      vocab['char2idx'].iteritems())
